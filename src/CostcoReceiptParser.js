@@ -1,3 +1,4 @@
+const chalk = require("chalk");
 const { RegexUtils } = require("./RegexUtils");
 const { NumberUtils } = require("./NumberUtils");
 
@@ -88,7 +89,7 @@ class CostcoReceiptParser {
   itemsSoldCheck() {
     const checkPasses = this.totalItemsSoldCalculated === this.totalItemsSoldOnReceipt;
     if (!checkPasses) {
-      console.log(`Items sold check failed for ${ this.getDate() }. Calculated items sold (${ this.totalItemsSoldCalculated }) does not equal items sold on receipt (${ this.totalItemsSoldOnReceipt }).`);
+      console.log(chalk.red(`Items sold check failed for ${ this.getDate() }. Calculated items sold (${ this.totalItemsSoldCalculated }) does not equal items sold on receipt (${ this.totalItemsSoldOnReceipt }).\n`));
     }
     return checkPasses;
   }

@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const chalk = require("chalk");
 const { PdfParser } = require("./src/PdfParser");
 const { CostcoReceiptParser } = require("./src/CostcoReceiptParser");
 const { CsvWriter } = require("./src/CsvWriter");
@@ -17,6 +18,9 @@ main();
 // 2. Get all PDF file names in `./costco-receipt-pdfs`.
 // 3. Parse each PDF.
 // 4. Write all transactions to `.out/costco-receipts.csv`
+// 5. If there's any errors encountered on the receipt (e.g., the total or items sold
+//    aren't as expected), a line is printed to the console explaining what the mismatch
+//    was and on which receipt.
 function main() {
   createOutputDir();
   const pdfs = getReceiptPdfs();
@@ -98,7 +102,9 @@ function correctnessChecks(pdf, totalSpent, costcoReceiptParser) {
       return true;
     }
 
-    console.log(`Total spent check failed for ${ pdf }. Calculated spend (${ calculated }) doesn't equal receipt value (${ receipt }).`);
+    console.log(chalk.red(`Total spent check failed for ${ pdf }. Calculated spend ($${ calculated }) doesn't equal total on receipt ($${ receipt }).`));
+    console.log(`Double check the receipt to see if the numbers add up. Costco sometimes doesn't include discounts for items on the receipt.\nThere could also be an error in the script. If so, feel free to reach out to me.\n`);
+
     return false;
   }
 
