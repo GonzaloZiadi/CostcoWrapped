@@ -1,0 +1,15 @@
+{
+  "name": "costcowrapped",
+  "version": "1.0.0",
+  "description": "Parse Costco receipts to get fun stats, a la Spotify Wrapped.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "pdf-parse": "^1.1.1"
+  }
+}
