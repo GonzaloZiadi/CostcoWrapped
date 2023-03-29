@@ -2,7 +2,6 @@ const fs = require("fs");
 const path = require("path");
 const { PdfParser } = require("./PdfParser");
 const { CostcoReceiptParser } = require("./CostcoReceiptParser");
-const _ = require("lodash");
 
 const AMOUNT = "amount";
 const PDFS_DIRECTORY = "./costco-receipt-pdfs";
