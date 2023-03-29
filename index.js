@@ -1,23 +1,46 @@
 const fs = require("fs");
 const path = require("path");
-const { PdfParser } = require("./PdfParser");
-const { CostcoReceiptParser } = require("./CostcoReceiptParser");
+const { PdfParser } = require("./src/PdfParser");
+const { CostcoReceiptParser } = require("./src/CostcoReceiptParser");
+const { CsvWriter } = require("./src/CsvWriter");
+const { NumberUtils } = require("./src/NumberUtils");
 
 const AMOUNT = "amount";
 const PDFS_DIRECTORY = "./costco-receipt-pdfs";
+const OUTPUT_DIRECTORY = "./out";
 
-// How it works
-// 1. Read all PDFs in `./costco-receipt-pdfs`
-// 2. Parse each PDF
-// 3. Write all transactions to a CSV
+const pdfParser = new PdfParser();
 
-const pdfs = fs.readdirSync(PDFS_DIRECTORY, { withFileTypes: true })
+main();
+
+// 1. Delete the `.out` directory and re-create it so that it's empty for each run.
+// 2. Get all PDF file names in `./costco-receipt-pdfs`.
+// 3. Parse each PDF.
+// 4. Write all transactions to `.out/costco-receipts.csv`
+function main() {
+  createOutputDir();
+  const pdfs = getReceiptPdfs();
+  for (const pdf of pdfs) {
+    parseReceiptPdf(pdf);
+  }
+}
+
+function createOutputDir() {
+  if (fs.existsSync(OUTPUT_DIRECTORY)) {
+    fs.rmSync(OUTPUT_DIRECTORY, { recursive: true });
+  }
+
+  fs.mkdirSync(OUTPUT_DIRECTORY);
+}
+
+function getReceiptPdfs() {
+  return fs.readdirSync(PDFS_DIRECTORY, { withFileTypes: true })
     .filter(file => file.isFile()) // exclude directories
     .filter(file => path.extname(file.name) === `.pdf`)
     .map(file => `${ PDFS_DIRECTORY }/${ file.name }`);
+}
 
-const pdfParser = new PdfParser();
-for (const pdf of pdfs) {
+function parseReceiptPdf(pdf) {
   let transactions = [];
   let totalSpent = 0;
 
@@ -29,21 +52,22 @@ for (const pdf of pdfs) {
     }
     
     for (const line of data.text.split("\n")) {
-      parseLine(line, costcoReceiptParser, updateTransactionsAndTotalSpent);
+      parseReceiptLine(line, costcoReceiptParser, updateTransactionsAndTotalSpent);
     }
 
-    transactions = addDateToTransactions(transactions, costcoReceiptParser.getDate());
-    
-    // Correctness checks
-    totalSpentCheck(pdf, totalSpent, costcoReceiptParser.getTotalSpent());
-    costcoReceiptParser.itemsSoldCheck()
+    // Add the receipt date to each transaction
+    transactions = transactions.map(obj => ({ ...obj, date: costcoReceiptParser.getDate() }));
 
-    // Calculate other stats (I calculated these through Google Sheets)
-    // total spent, number of items bought, number of costco's shopped at (see `costcoReceiptParser.getStore())`)
+    correctnessChecks(pdf, totalSpent, costcoReceiptParser);
+    writeToCsv(transactions);
+
+    // TODO: Calculate other stats (I calculated these through Google Sheets)
+    // total spent, number of items bought, amount spent on tax, number of different costcos
+    // shopped at (see `costcoReceiptParser.getStore())`), etc.
   });
 }
 
-function parseLine(line, costcoReceiptParser, updateFn) {
+function parseReceiptLine(line, costcoReceiptParser, updateFn) {
   if (line.length === 0) {
     return;
   }
@@ -64,22 +88,31 @@ function parseLine(line, costcoReceiptParser, updateFn) {
   }
 }
 
-function addDateToTransactions(transactions, date) {
-  return transactions.map(obj => ({ ...obj, date: date }))
-}
+function correctnessChecks(pdf, totalSpent, costcoReceiptParser) {
+  const totalSpentCheck = (pdf, totalSpentCalculated, totalSpentReceipt) => {
+    const numberUtils = new NumberUtils();
+    const calculated = numberUtils.roundToTenth(totalSpentCalculated);
+    const receipt = numberUtils.roundToTenth(totalSpentReceipt);
 
-function totalSpentCheck(pdf, totalSpentCalculated, totalSpentReceipt) {
-  const calculated = roundToTenth(totalSpentCalculated);
-  const receipt = roundToTenth(totalSpentReceipt);
-  if (calculated === receipt) {
-    return true;
+    if (calculated === receipt) {
+      return true;
+    }
+
+    console.log(`Total spent check failed for ${ pdf }. Calculated spend (${ calculated }) doesn't equal receipt value (${ receipt }).`);
+    return false;
   }
 
-  console.log(`Total spent check failed for ${ pdf }. Calculated (${ calculated }) doesn't equal receipt value (${ receipt }).`);
-  return false;
+  totalSpentCheck(pdf, totalSpent, costcoReceiptParser.getTotalSpent());
+  costcoReceiptParser.itemsSoldCheck();
 }
 
-// See https://stackoverflow.com/a/27083270
-function roundToTenth(num) {
-  return Math.round(num * 100) / 100;
+function writeToCsv(transactions) {
+  const headers = [
+    { id: "date", title: "Date" },
+    { id: "itemIdentifier", title: "Item identifier" },
+    { id: "itemName", title: "Item name" },
+    { id: "amount", title: "Amount" },
+  ];
+  new CsvWriter({ outputDir: OUTPUT_DIRECTORY, headers: headers, append: true, logSuccess: false })
+    .write("costco-receipts.csv", transactions);
 }

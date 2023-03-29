@@ -1,10 +1,10 @@
-const RegexUtils = require("./RegexUtils").RegexUtils;
-const CurrencyFormatter = require("./CurrencyFormatter").CurrencyFormatter;
+const { RegexUtils } = require("./RegexUtils");
+const { NumberUtils } = require("./NumberUtils");
 
 class CostcoReceiptParser {
   constructor() {
     this.regexUtils = new RegexUtils();
-    this.currencyFormatter = new CurrencyFormatter();
+    this.numberUtils = new NumberUtils();
 
     this.multilineMode = false;
     this.multilineModeCurrentItemName = undefined;
@@ -30,7 +30,7 @@ class CostcoReceiptParser {
       return;
     }
 
-    // When there are no remaining transactions, grab metadata such as the receipt data and 
+    // When there are no remaining transactions, grab metadata such as the receipt date and 
     // total items sold.
     if (!this.hasRemainingTransactions) {
       this.#getReceiptMetadata(line);
@@ -59,11 +59,21 @@ class CostcoReceiptParser {
       return;
     }
 
+    // A transaction might span multiple lines.
+    //
+    // Example:
+    //   900091KS
+    //   CABERNET
+    //   7.99- A
     const multilineTransaction = this.#parseMultilineTransaction(line);
     if (multilineTransaction) {
       return multilineTransaction;
     }
   
+    // A typical transaction spans only one line.
+    //
+    // Example:
+    //   1204135 ORG FIRM TO 6.49
     return this.#parseTransaction(line);
   }
 
@@ -78,7 +88,7 @@ class CostcoReceiptParser {
   itemsSoldCheck() {
     const checkPasses = this.totalItemsSoldCalculated === this.totalItemsSoldOnReceipt;
     if (!checkPasses) {
-      console.log(`Items sold check failed for ${ this.getDate() }. Calculated ${ this.totalItemsSoldCalculated } does not equal receipt ${ this.totalItemsSoldOnReceipt }.`);
+      console.log(`Items sold check failed for ${ this.getDate() }. Calculated items sold (${ this.totalItemsSoldCalculated }) does not equal items sold on receipt (${ this.totalItemsSoldOnReceipt }).`);
     }
     return checkPasses;
   }
@@ -92,13 +102,16 @@ class CostcoReceiptParser {
   }
 
   getStore() {
-    const splitOnComma = this.storeLines[2].split(",");
+    // this.storeLines might look like:
+    //   ['AUSTIN #681', '10401 RESEARCH BLVD', 'AUSTIN,TX78759']
+    const splitCityStateZipOnComma = this.storeLines[2].split(",");
+
     return {
       store: this.storeLines[0],
       street: this.storeLines[1],
-      city: splitOnComma[0],
-      zipCode: splitOnComma[1].slice(-5),
-      state: splitOnComma[1].slice(0, 2),
+      city: splitCityStateZipOnComma[0],
+      zipCode: splitCityStateZipOnComma[1].slice(-5),
+      state: splitCityStateZipOnComma[1].slice(0, 2),
     };
   }
 
@@ -118,41 +131,42 @@ class CostcoReceiptParser {
   }
 
   #parseMultilineTransaction(line) {
-    // Line starts with a number and doesn't have a dot. This means it's the
-    // first line of a multiline entry.
+    // Line starts with a number and doesn't have a dollar amount.
+    // This means it's the first line of a multiline entry.
     const firstCharIsNumber = !isNaN(line.charAt(0));
-    if (firstCharIsNumber && !line.includes(".")) {
+    const hasDollarAmount = /\.[0-9]{2}/.test(line);
+    if (firstCharIsNumber && !hasDollarAmount) {
       this.multilineMode = true;
 
+      // Remove all letters for the item identifier
       const itemIdentifier = line.replace(/[A-Z]/g, '');
       this.multilineModeCurrentItemIdentifier = itemIdentifier;
 
+      // Remove all numbers for the item name and add a space so we can
+      // concatenate the next line onto it
       const itemName = `${ line.replace(/[0-9]/g, '') } `;
       this.multilineModeCurrentItemName = itemName;
 
-      // Remove all letters for the item identifier, all numbers for the item name.
       return {
         itemIdentifier: itemIdentifier,
         itemName: itemName,
       };
     }
 
-    const lineHasNumber = /\d/.test(line);
-    // We're in a multiline entry and the line has no number. This means it's part of the
-    // item's name.
-    if (this.multilineMode && !lineHasNumber) {
+    // We're in a multiline entry and the line doesn't have a dollar amount.
+    // This means it's part of the item's name.
+    if (this.multilineMode && !hasDollarAmount) {
       this.multilineModeCurrentItemName += line;
       return {
         itemName: line,
       };
     }
 
-    // We're in a multiline entry and the line starts with a number. This means this line is
-    // the price paid for the item.
-    if (this.multilineMode && firstCharIsNumber) {
+    // We're in a multiline entry and the line has a dollar amount.
+    // This means it's the price paid for the item.
+    if (this.multilineMode && hasDollarAmount) {
       const dollarRegex = `(${ this.regexUtils.dollar() }-?)${ this.regexUtils.anything() }`;
       const foundAmount = this.regexUtils.matchAll(line, dollarRegex);
-
       if (foundAmount.length) {
         const amount = this.#formatAmount(foundAmount[1]);
         const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
@@ -169,9 +183,11 @@ class CostcoReceiptParser {
   }
   
   #parseTransaction(line) {
+    // A typical line looks like: 1204135 ORG FIRM TO 6.49
+    // We capture the numbers at the start (item identifier), capture everything that follows (item name),
+    // and capture the dollar amount at the end.
     const transactionRegex = `([0-9]+)(${ this.regexUtils.nonGreedyAnything() })(${ this.regexUtils.dollar() }-?)`;
     const foundTransaction = this.regexUtils.matchAll(line, transactionRegex);
-  
     if (foundTransaction.length) {
       const amount = this.#formatAmount(foundTransaction[3]);
       const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
@@ -189,11 +205,18 @@ class CostcoReceiptParser {
   }
 
   #determineItemNameAndIdentifier(amount, itemName, itemIdentifier) {
-    // This is a normal bought item.
+    // This is a typical bought item.
+    //
+    // Example:
+    //   1204135 ORG FIRM TO 6.49 (bought item - price is positive)
     if (amount > 0) {
+      this.totalItemsSoldCalculated++;
+
+      // Maintain a mapping from item identifier to item name and from
+      // item name to item identifier to be able to properly identify
+      // discounts and returns.
       this.itemNameByItemIdentifier[itemIdentifier] = itemName;
       this.itemIdentifierByItemName[itemName] = itemIdentifier;
-      this.totalItemsSoldCalculated++;
 
       return {
         itemName: itemName,
@@ -201,7 +224,8 @@ class CostcoReceiptParser {
       };
     }
 
-    // Amount is less than zero. We're dealing with a discount or a return.
+    // If we're here, the price paid for an item is less than zero.
+    // We're dealing with a discount or a return.
 
     // We've seen this item before. This is a discount.
     // Leave the name as is, grab the item identifier for the non-discount version of
@@ -215,7 +239,18 @@ class CostcoReceiptParser {
     const itemNames = Object.keys(this.itemIdentifierByItemName);
     if (itemNames.includes(itemName)) {
       const itemIdentifierForItemName = this.itemIdentifierByItemName[itemName];
+
+      // A discount might not use the same name as the bought item.
+      // Maintain a mapping from the discount identifier to the bought item identifier.
+      //
+      // Example:
+      //   1204135 ORG FIRM TO 6.49 (bought item)
+      //   294721 ORG FIRM TO 2.00- (discount for bought item; different identifier but same name)
+      //   294721 /0 2.00- (discount for bought item under a different name)
+      //
+      //   Add a mapping from 294721 to 1204135.
       this.itemIdentifierByDiscountIdentifier[itemIdentifier] = itemIdentifierForItemName;
+
       return {
         itemName: itemName,
         itemIdentifier: `D-${ itemIdentifierForItemName }`
@@ -223,8 +258,8 @@ class CostcoReceiptParser {
     }
 
     // This is a discount going by another name than the bought product.
-    // Let's find the bought item identifier for this discount item identifier.
-    // Then let's use the bought item identifier to get the item's correct name.
+    // First, we find the bought item identifier for this discount item identifier.
+    // Then, we use the bought item identifier to get the item's correct name.
     //
     // Example:
     //   1204135 ORG FIRM TO 6.49 (bought item)
@@ -240,7 +275,7 @@ class CostcoReceiptParser {
       };
     }
 
-    // This is a return so reduce the amount sold by one.
+    // This is a return so reduce the number of items sold by one.
     this.totalItemsSoldCalculated--;
     return {
       itemName: itemName,
@@ -251,9 +286,9 @@ class CostcoReceiptParser {
   #formatAmount(amount) {
     // check if last char is a `-`, this means it's negative (refund)
     if (amount.slice(-1) === "-") {
-      return this.currencyFormatter.toNumber(amount.slice(0, -1), true);
+      return this.numberUtils.dollarToNumber(amount.slice(0, -1), true);
     } else {
-      return this.currencyFormatter.toNumber(amount);
+      return this.numberUtils.dollarToNumber(amount);
     }
   }
   
