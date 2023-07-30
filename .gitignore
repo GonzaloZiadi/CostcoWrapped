@@ -1,3 +1,4 @@
 node_modules/
 costco-receipt-pdfs/
 out/
+.DS_Store
