@@ -205,7 +205,7 @@ class CostcoReceiptParser {
     // We're in multiline mode and the line has a dollar amount.
     // This means it's the price paid for the item.
     if (this.multilineMode && hasDollarAmount) {
-      const dollarRegex = `(${ this.regexUtils.dollar() }-?)${ this.regexUtils.anything() }`;
+      const dollarRegex = `${ this.#dollarRegex() }${ this.regexUtils.anything() }`;
       const foundAmount = this.regexUtils.matchAll(line, dollarRegex);
       if (foundAmount.length) {
         const amount = this.#formatAmount(foundAmount[1]);
@@ -223,11 +223,13 @@ class CostcoReceiptParser {
   }
   
   #parseTransaction(line) {
+    const transaction = this.#transactionReplacements(line);
+
     // A typical line looks like: 1204135 ORG FIRM TO 6.49
     // We capture the numbers at the start (item identifier), capture everything that follows (item name),
     // and capture the dollar amount at the end.
-    const transactionRegex = `([0-9]+)(${ this.regexUtils.nonGreedyAnything() })(${ this.regexUtils.dollar() }-?)`;
-    const foundTransaction = this.regexUtils.matchAll(line, transactionRegex);
+    const transactionRegex = `([0-9]+)(${ this.regexUtils.nonGreedyAnything() })${ this.#dollarRegex() }`;
+    const foundTransaction = this.regexUtils.matchAll(transaction, transactionRegex);
     if (foundTransaction.length) {
       const amount = this.#formatAmount(foundTransaction[3]);
       const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
@@ -324,6 +326,25 @@ class CostcoReceiptParser {
       itemName: formattedItemName,
       itemIdentifier: `R-${ itemIdentifier }`
     };
+  }
+
+  // Some item names have numbers which can merge with the item's
+  // price and mess up the total. We add a space after known problematic
+  // item names to prevent this issue.
+  #transactionReplacements(line) {
+    const itemNamesWithNumbers = ["KS WATER 40"];
+
+    for (const itemName of itemNamesWithNumbers) {
+      if (line.includes(itemName)) {
+        return line.replace(itemName, `${ itemName } `);
+      }
+    }
+
+    return line;
+  }
+
+  #dollarRegex() {
+    return `(${ this.regexUtils.dollar() }-?)`;
   }
   
   #formatAmount(amount) {

@@ -29,7 +29,7 @@ class RegexUtils {
     //   3. the rest of the dollar and cents, i.e., 4.32 or 97.45
     //
     // This is a bit wonky but it yielded the best results on the receipts
-    // as item identifier's sometimes contain numbers which can make this
+    // as item identifiers sometimes contain numbers which can make this
     // parsing tricky.
     return "(?:[1-9][0-9]{1,2},)?" + "[1-9]?" + "[0-9]{1,2}\\.[0-9]{2}";
   }
