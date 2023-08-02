@@ -38,12 +38,6 @@ class CostcoReceiptParser {
       return;
     }
 
-    // The member number might be on one or two lines
-    //
-    // Example:
-    //   Member 121549142109
-    //   Member
-    //   121549142109
     if (this.#parseMemberIdentifier(line)) {
       return;
     }
@@ -133,14 +127,18 @@ class CostcoReceiptParser {
     };
   }
 
+  // The member number might be on one or two lines. Each page
+  // of the receipt starts with the member number.
+  //
+  // Example:
+  //   Member 121549142109
+  //   Member
+  //   121549142109
   #parseMemberIdentifier(line) {
-    if (this.memberIdentifier.length === 2) {
-      return false;
-    }
-
     if (line.includes("Member")) {
       this.memberIdentifier.push(line);
 
+      // Check if the member number is on the same line
       const hasNumber = /[0-9]/.test(line);
       if (hasNumber) {
         this.memberIdentifier.push(line.replace(/Member/, ""));
@@ -149,7 +147,9 @@ class CostcoReceiptParser {
       return true;
     }
 
-    if (this.memberIdentifier.length === 1) {
+    // Check if the member identifier length is odd meaning we've
+    // just added the 'Member' string and are missing the number
+    if (this.memberIdentifier.length % 2 === 1) {
       this.memberIdentifier.push(line);
       return true;
     }
