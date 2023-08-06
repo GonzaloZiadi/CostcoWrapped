@@ -181,9 +181,8 @@ class CostcoReceiptParser {
       const itemIdentifier = line.replace(/[A-Z]/g, "");
       this.multilineModeCurrentItemIdentifier = itemIdentifier;
 
-      // Remove all numbers for the item name and add a space so we can
-      // concatenate the next line onto it
-      const itemName = `${ line.replace(/[0-9]/g, "") } `;
+      // Remove item identifier and add a space so we can concat the next line
+      const itemName = `${ line.replace(/^[A-Z]?[0-9]+/g, "") } `;
       this.multilineModeCurrentItemName = itemName;
 
       return {
@@ -205,8 +204,7 @@ class CostcoReceiptParser {
     // We're in multiline mode and the line has a dollar amount.
     // This means it's the price paid for the item.
     if (this.multilineMode && hasDollarAmount) {
-      const dollarRegex = `${ this.#dollarRegex() }${ this.regexUtils.anything() }`;
-      const foundAmount = this.regexUtils.matchAll(line, dollarRegex);
+      const foundAmount = this.regexUtils.matchAll(line, this.#dollarRegex());
       if (foundAmount.length) {
         const amount = this.#formatAmount(foundAmount[1]);
         const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
@@ -332,7 +330,7 @@ class CostcoReceiptParser {
   // price and mess up the total. We add a space after known problematic
   // item names to prevent this issue.
   #transactionReplacements(line) {
-    const itemNamesWithNumbers = ["KS WATER 40"];
+    const itemNamesWithNumbers = ["KS WATER 40", "CHNT 10-3/8"];
 
     for (const itemName of itemNamesWithNumbers) {
       if (line.includes(itemName)) {
