@@ -1,9 +1,13 @@
 class NumberUtils {
   constructor() { }
 
-  // See https://stackoverflow.com/a/27083270
-  roundToTenth(num) {
-    return Math.round(num * 100) / 100;
+  numberToDollar(num) {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(num);
   }
 
   dollarToNumber(num, isNegative = false) {

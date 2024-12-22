@@ -1,12 +1,12 @@
 {
   "name": "costco-wrapped",
+  "author": "https://www.pathtosimple.com/",
   "version": "1.0.0",
   "description": "Parse Costco receipts to get fun stats, a la Spotify Wrapped.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "author": "https://www.pathtosimple.com/",
   "dependencies": {
     "chalk": "^4.1.2",
     "csv-writer": "^1.6.0",

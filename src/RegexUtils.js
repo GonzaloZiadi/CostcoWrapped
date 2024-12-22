@@ -15,11 +15,12 @@ class RegexUtils {
   }
 
   dollar() {
-    // Three parts:
+    // Parts:
     //   1. optional negative sign
     //   2. optional non-capturing group for dollar sign
     //   3. the dollar amount
-    return "-?" + "(?:\\$ ?)?" + this.#dollarCore();
+    //   4. optional negative sign
+    return `(-?(?:\\$ ?)?${this.#dollarCore()}-?)`;
   }
 
   #dollarCore() {

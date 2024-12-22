@@ -1,16 +1,18 @@
 const fs = require("fs");
 const path = require("path");
 const chalk = require("chalk");
-const { PdfParser } = require("./src/PdfParser");
+const pdfParse = require("pdf-parse");
 const { CostcoReceiptParser } = require("./src/CostcoReceiptParser");
 const { CsvWriter } = require("./src/CsvWriter");
 const { NumberUtils } = require("./src/NumberUtils");
 
-const AMOUNT = "amount";
+// Comment out the line below to see debug logs
+console.debug = function() {};
+
 const PDFS_DIRECTORY = "./costco-receipt-pdfs";
 const OUTPUT_DIRECTORY = "./out";
 
-const pdfParser = new PdfParser();
+const numberUtils = new NumberUtils();
 
 main();
 
@@ -23,9 +25,9 @@ main();
 //    was and on which receipt.
 function main() {
   createOutputDir();
-  const pdfs = getReceiptPdfs();
-  for (const pdf of pdfs) {
-    parseReceiptPdf(pdf);
+
+  for (const pdfName of getReceiptPdfFileNames()) {
+    parseReceiptPdf(pdfName);
   }
 }
 
@@ -37,79 +39,78 @@ function createOutputDir() {
   fs.mkdirSync(OUTPUT_DIRECTORY);
 }
 
-function getReceiptPdfs() {
+function getReceiptPdfFileNames() {
   return fs.readdirSync(PDFS_DIRECTORY, { withFileTypes: true })
     .filter(file => file.isFile()) // exclude directories
-    .filter(file => path.extname(file.name) === `.pdf`)
+    .filter(file => path.extname(file.name) === ".pdf")
     .map(file => `${ PDFS_DIRECTORY }/${ file.name }`);
 }
 
-function parseReceiptPdf(pdf) {
+function parseReceiptPdf(pdfName) {
   let transactions = [];
-  let totalSpent = 0;
 
-  pdfParser.parse(pdf).then(data => {
+  pdfParse(fs.readFileSync(pdfName)).then(data => {
     const costcoReceiptParser = new CostcoReceiptParser();
-    const updateTransactionsAndTotalSpent = (transaction) => {
-      transactions.push(transaction);
-      totalSpent += transaction[AMOUNT];
-    }
-    
+
     for (const line of data.text.split("\n")) {
-      parseReceiptLine(line, costcoReceiptParser, updateTransactionsAndTotalSpent);
+      const transaction = parseReceiptLine(line, costcoReceiptParser);
+      if (transaction) {
+        console.debug("transaction is ", JSON.stringify(transaction), "\n");
+        transactions.push(transaction);
+      }
     }
 
     // Add the receipt date to each transaction
-    transactions = transactions.map(obj => ({ ...obj, date: costcoReceiptParser.getDate() }));
+    transactions = transactions.map(obj => (
+      {
+      ...obj,
+      date: costcoReceiptParser.getDate(),
+      isTaxable: obj.isTaxable ? "Y" : "N",
+      cardLastFour: costcoReceiptParser.getCardLastFour()
+    }));
 
-    correctnessChecks(pdf, totalSpent, costcoReceiptParser);
-    writeToCsv(transactions);
+    correctnessChecks(pdfName, costcoReceiptParser);
 
     // TODO: Calculate other stats (I calculated these through Google Sheets)
     // total spent, number of items bought, amount spent on tax, number of different costcos
     // shopped at (see `costcoReceiptParser.getStore())`), etc.
+  }).finally(() => {
+    writeToCsv(transactions);
   });
 }
 
-function parseReceiptLine(line, costcoReceiptParser, updateFn) {
+function parseReceiptLine(line, costcoReceiptParser) {
   if (line.length === 0) {
     return;
   }
 
-  const transaction = costcoReceiptParser.parseLine(line);
-  if (!transaction) {
-    return;
-  }
-
-  if (costcoReceiptParser.isInMultilineMode()) {  
-    // Once the multiline transaction has an amount, we're done with multiline mode.
-    if (Object.keys(transaction).includes(AMOUNT)) {
-      costcoReceiptParser.setMultilineMode(false);
-      updateFn(transaction);
-    }
-  } else {
-    updateFn(transaction);
-  }
+  return costcoReceiptParser.parseLine(line);
 }
 
-function correctnessChecks(pdf, totalSpent, costcoReceiptParser) {
-  const totalSpentCheck = (pdf, totalSpentCalculated, totalSpentReceipt) => {
-    const numberUtils = new NumberUtils();
-    const calculated = numberUtils.roundToTenth(totalSpentCalculated);
-    const receipt = numberUtils.roundToTenth(totalSpentReceipt);
+function correctnessChecks(pdfName, costcoReceiptParser) {
+  const calculatedTotal = numberUtils.numberToDollar(costcoReceiptParser.getTotalCalculated());
+  const receiptTotal = numberUtils.numberToDollar(costcoReceiptParser.getTotal());
+  const spentCheckPasses = calculatedTotal === receiptTotal;
 
-    if (calculated === receipt) {
-      return true;
-    }
+  const numItemsSoldCalculated = costcoReceiptParser.getNumItemsSoldCalculated();
+  const numItemsSoldReceipt = costcoReceiptParser.getNumItemsSoldReceipt();
+  const itemsSoldCheckPasses = numItemsSoldCalculated === numItemsSoldReceipt;
 
-    console.log(chalk.red(`Total spent check failed for ${ pdf }. Calculated spend ($${ calculated }) doesn't equal total on receipt ($${ receipt }).`));
-    console.log(`Double check the receipt to see if the numbers add up. Costco sometimes doesn't include discounts for items on the receipt.\nThere could also be an error in the script. If so, feel free to reach out to me.\n`);
-
-    return false;
+  if (!spentCheckPasses || !itemsSoldCheckPasses) {
+    console.log(chalk.red(`Check failed for ${ pdfName }.`));
   }
 
-  totalSpentCheck(pdf, totalSpent, costcoReceiptParser.getTotalSpent());
-  costcoReceiptParser.itemsSoldCheck();
+  if (!spentCheckPasses) {
+    console.log(chalk.yellow(` Calculated spend (${ calculatedTotal }) doesn't equal total on receipt (${ receiptTotal }).`));
+  }
+
+  if (!itemsSoldCheckPasses) {
+    console.log(chalk.yellow(` Calculated items sold (${ numItemsSoldCalculated }) does not equal items sold on receipt (${ numItemsSoldReceipt }).`));
+  }
+
+  if (!spentCheckPasses || !itemsSoldCheckPasses) {
+    console.log(` Double check the receipt to see if the numbers add up. Costco sometimes doesn't include discounts for items on the receipt.\n There could also be an error in the script. If so, feel free to reach out to me.\n`);
+  }
 }
 
 function writeToCsv(transactions) {
@@ -118,7 +119,10 @@ function writeToCsv(transactions) {
     { id: "itemIdentifier", title: "Item identifier" },
     { id: "itemName", title: "Item name" },
     { id: "amount", title: "Amount" },
+    { id: "isTaxable", title: "Taxable" },
+    { id: "cardLastFour", title: "Card used" },
   ];
-  new CsvWriter({ outputDir: OUTPUT_DIRECTORY, headers: headers, append: true, logSuccess: false })
+
+  new CsvWriter({ outputDir: OUTPUT_DIRECTORY, headers: headers, append: true })
     .write("costco-receipts.csv", transactions);
 }

@@ -1,4 +1,3 @@
-const chalk = require("chalk");
 const { RegexUtils } = require("./RegexUtils");
 const { NumberUtils } = require("./NumberUtils");
 
@@ -16,12 +15,17 @@ class CostcoReceiptParser {
     this.receiptIdentifier = undefined;
     this.hasRemainingTransactions = true;
     this.date = undefined;
-    this.subtotalAmount = 0;
+    this.cardLastFour = undefined;
+
+    this.totalCalculated = 0;
+    this.total = 0;
     this.tax = 0;
-    this.totalItemsSoldOnReceipt = 0;
-    this.totalItemsSoldCalculated = 0;
+
+    this.numItemsSoldReceipt = 0;
+    this.numItemsSoldCalculated = 0;
 
     this.itemNameByItemIdentifier = {};
+    this.taxCodeByItemIdentifier = {};
     this.itemIdentifierByItemName = {};
     this.itemIdentifierByDiscountIdentifier = {};
   }
@@ -49,9 +53,7 @@ class CostcoReceiptParser {
       return;
     }
 
-    const subtotal = this.#find(line, "SUBTOTAL");
-    if (subtotal) {
-      this.subtotalAmount = this.#formatAmount(subtotal);
+    if (this.#find(line, "SUBTOTAL")) {
       return;
     }
 
@@ -61,12 +63,14 @@ class CostcoReceiptParser {
       return {
         itemIdentifier: "TAX",
         itemName: "TAX",
-        amount: this.tax
+        amount: this.tax,
+        isTaxable: false
       };
     }
   
     const total = this.#find(line, "****TOTAL");
     if (total) {
+      this.total = this.#formatAmount(total);
       this.hasRemainingTransactions = false;
       return;
     }
@@ -89,28 +93,28 @@ class CostcoReceiptParser {
     return this.#parseTransaction(line);
   }
 
-  setMultilineMode(val) {
-    this.multilineMode = val;
-  }
-  
-  isInMultilineMode() {
-    return this.multilineMode;
+  getNumItemsSoldCalculated() {
+    return this.numItemsSoldCalculated;
   }
 
-  itemsSoldCheck() {
-    const checkPasses = this.totalItemsSoldCalculated === this.totalItemsSoldOnReceipt;
-    if (!checkPasses) {
-      console.log(chalk.red(`Items sold check failed for ${ this.getDate() }. Calculated items sold (${ this.totalItemsSoldCalculated }) does not equal items sold on receipt (${ this.totalItemsSoldOnReceipt }).\n`));
-    }
-    return checkPasses;
+  getNumItemsSoldReceipt() {
+    return this.numItemsSoldReceipt;
   }
 
-  getTotalSpent() {
-    return this.subtotalAmount + this.tax;
+  getTotalCalculated() {
+    return this.totalCalculated + this.tax;
+  }
+
+  getTotal() {
+    return this.total;
   }
 
   getDate() {
     return this.date;
+  }
+
+  getCardLastFour() {
+    return this.cardLastFour;
   }
 
   getStore() {
@@ -165,7 +169,16 @@ class CostcoReceiptParser {
 
     const totalItemsSold = this.#find(line, "TOTAL NUMBER OF ITEMS SOLD =");
     if (totalItemsSold) {
-      this.totalItemsSoldOnReceipt = Number(totalItemsSold);
+      this.numItemsSoldReceipt = Number(totalItemsSold);
+      return;
+    }
+
+    // EXAMPLES:
+    //   - XXXXXXXXXXXXX8926CHIP read
+    //   - XXXXXXXXXXXXX1043
+    if (this.#find(line, "XXXXXXXXXXXXX")) {
+      // Remove all letters; leave only the card numbers
+      this.cardLastFour = line.replace(/[A-Za-z]/g, "");
       return;
     }
   }
@@ -176,46 +189,41 @@ class CostcoReceiptParser {
     const hasDollarAmount = /\.[0-9]{2}/.test(line);
     if (!this.multilineMode && !hasDollarAmount) {
       this.multilineMode = true;
+      this.multilineModeCurrentItemIdentifier = line;
+      this.multilineModeCurrentItemName = "";
 
-      // Remove all letters for the item identifier
-      const itemIdentifier = line.replace(/[A-Z]/g, "");
-      this.multilineModeCurrentItemIdentifier = itemIdentifier;
+      console.debug(` parseMultilineTransaction; not multiline mode, no dollar amount, so first line of a multiline entry. [${line}, Item ID: ${this.multilineModeCurrentItemIdentifier}, ItemName: ${this.multilineModeCurrentItemName}]`);
 
-      // Remove item identifier and add a space so we can concat the next line
-      const itemName = `${ line.replace(/^[A-Z]?[0-9]+/g, "") } `;
-      this.multilineModeCurrentItemName = itemName;
-
-      return {
-        itemIdentifier: itemIdentifier,
-        itemName: itemName,
-      };
+      return;
     }
 
     // We're in multiline mode and the line doesn't have a dollar amount.
     // This means it's part of the item's name.
     if (this.multilineMode && !hasDollarAmount) {
-      const lineWithSpace = `${ line } `;
-      this.multilineModeCurrentItemName += lineWithSpace;
-      return {
-        itemName: lineWithSpace,
-      };
+      this.multilineModeCurrentItemName += `${ line } `;
+
+      console.debug(` parseMultilineTransaction; multiline mode, no dollar amount, part of item's name. [${line}, ItemName: ${this.multilineModeCurrentItemName}]`);
+
+      return;
     }
 
     // We're in multiline mode and the line has a dollar amount.
     // This means it's the price paid for the item.
     if (this.multilineMode && hasDollarAmount) {
-      const foundAmount = this.regexUtils.matchAll(line, this.#dollarRegex());
+      console.debug(` parseMultilineTransaction; price paid for the item. [${line}]`);
+
+      const foundAmount = this.regexUtils.matchAll(line, this.regexUtils.dollar());
       if (foundAmount.length) {
+        this.multilineMode = false;
+
         const amount = this.#formatAmount(foundAmount[1]);
-        const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
+        this.totalCalculated += amount;
+
+        const { itemName, itemIdentifier, isTaxable } = this.#determineItemNameAndIdentifier(
           amount, this.multilineModeCurrentItemName, this.multilineModeCurrentItemIdentifier
         );
 
-        return {
-          itemName: itemName,
-          itemIdentifier: itemIdentifier,
-          amount: amount
-        };
+        return { itemName, itemIdentifier, amount, isTaxable };
       }
     }
   }
@@ -223,52 +231,77 @@ class CostcoReceiptParser {
   #parseTransaction(line) {
     const transaction = this.#transactionReplacements(line);
 
+    // A line can look like 329256/77713142.00
+    // 329256 is the item identifier 7771314 is another identifier, 2.00 is the price
+    // We try to find a matching identifier (i.e., 7771314) based on previous lines
+    if (transaction.includes("/")) {
+      for (const itemIdentifier of Object.keys(this.itemNameByItemIdentifier)) {
+        // "329256/77713142.00".split("/") => [329256, 77713142.00]
+        // 77713142.00, split on 7771314 => ["", 2.00]
+        const splitOnItemIdentifier = transaction.split("/")[1].split(itemIdentifier);
+        if (splitOnItemIdentifier[0] === "") {
+          console.debug(` parseTransaction; includes slash, match found. [${itemIdentifier}, ${this.itemNameByItemIdentifier[itemIdentifier]}, ${splitOnItemIdentifier[1]}]`);
+
+          const amount = this.#formatAmount(splitOnItemIdentifier[1]);
+          this.totalCalculated += amount;
+
+          return {
+            itemIdentifier: `D-${ itemIdentifier }`,
+            itemName: this.itemNameByItemIdentifier[itemIdentifier],
+            amount,
+            isTaxable: this.#isTaxable(itemIdentifier)
+          };
+        }
+      }
+    }
+
     // A typical line looks like: 1204135 ORG FIRM TO 6.49
-    // We capture the numbers at the start (item identifier), capture everything that follows (item name),
-    // and capture the dollar amount at the end.
-    const transactionRegex = `([0-9]+)(${ this.regexUtils.nonGreedyAnything() })${ this.#dollarRegex() }`;
+    // We capture the numbers at the start (item identifier), everything that follows (item name),
+    // and the dollar amount at the end.
+    const transactionRegex = `([A-Z]?[0-9]+)(${ this.regexUtils.nonGreedyAnything() })${ this.regexUtils.dollar() }`;
     const foundTransaction = this.regexUtils.matchAll(transaction, transactionRegex);
     if (foundTransaction.length) {
+      console.debug(` parseTransaction; match found. [${foundTransaction[2]}, ${foundTransaction[1]}, ${foundTransaction[3]}]`);
+
       const amount = this.#formatAmount(foundTransaction[3]);
-      const { itemName, itemIdentifier } = this.#determineItemNameAndIdentifier(
+      this.totalCalculated += amount;
+
+      const { itemName, itemIdentifier, isTaxable } = this.#determineItemNameAndIdentifier(
         amount, foundTransaction[2], foundTransaction[1]
       );
 
-      return {
-        itemIdentifier: itemIdentifier,
-        itemName: itemName,
-        amount: amount
-      }
+      return { itemIdentifier, itemName, amount, isTaxable };
     }
-  
-    return undefined;
   }
 
-  #determineItemNameAndIdentifier(amount, itemName, itemIdentifier) {
-    // Remove starting/ending spaces and the `E ` at the beginning which stands for tax-exempt
-    const formattedItemName = itemName.trim().replace(/^E /, "");
+  #determineItemNameAndIdentifier(amount, itemName, originalItemIdentifier) {
+    // Remove all letters from the item identifier as there might be a letter
+    // at the start, e.g., E or F, that mean the item is food or FSA-eligible
+    const itemIdentifier = originalItemIdentifier.replace(/[A-Z]/g, "");
 
     // This is a typical bought item.
     //
     // Example:
     //   1204135 ORG FIRM TO 6.49 (bought item - price is positive)
     if (amount > 0) {
-      this.totalItemsSoldCalculated++;
+      this.numItemsSoldCalculated++;
 
-      // Maintain a mapping from item identifier to item name and from
-      // item name to item identifier to be able to properly identify
-      // discounts and returns.
-      this.itemNameByItemIdentifier[itemIdentifier] = formattedItemName;
-      this.itemIdentifierByItemName[formattedItemName] = itemIdentifier;
+      // Maintain these mappings to be able to properly identify
+      // discounts, returns, and tax status.
+      this.itemNameByItemIdentifier[itemIdentifier] = itemName;
+      this.taxCodeByItemIdentifier[itemIdentifier] = originalItemIdentifier;
+      this.itemIdentifierByItemName[itemName] = itemIdentifier;
 
       return {
-        itemName: formattedItemName,
-        itemIdentifier: itemIdentifier
+        itemName,
+        itemIdentifier,
+        isTaxable: this.#isTaxable(originalItemIdentifier)
       };
     }
 
     // If we're here, the price paid for an item is less than zero.
     // We're dealing with a discount or a return.
+    // --------
 
     // We've seen this item before. This is a discount.
     // Leave the name as is, grab the item identifier for the non-discount version of
@@ -280,8 +313,9 @@ class CostcoReceiptParser {
     //
     //   Instead of tagging this item with 294721, tag it with D-1204135
     const itemNames = Object.keys(this.itemIdentifierByItemName);
-    if (itemNames.includes(formattedItemName)) {
-      const itemIdentifierForItemName = this.itemIdentifierByItemName[formattedItemName];
+    if (itemNames.includes(itemName)) {
+      const itemIdentifierForItemName = this.itemIdentifierByItemName[itemName];
+      const taxCode = this.taxCodeByItemIdentifier[itemIdentifierForItemName];
 
       // A discount might not use the same name as the bought item.
       // Maintain a mapping from the discount identifier to the bought item identifier.
@@ -295,8 +329,9 @@ class CostcoReceiptParser {
       this.itemIdentifierByDiscountIdentifier[itemIdentifier] = itemIdentifierForItemName;
 
       return {
-        itemName: formattedItemName,
-        itemIdentifier: `D-${ itemIdentifierForItemName }`
+        itemName,
+        itemIdentifier: `D-${ itemIdentifierForItemName }`,
+        isTaxable: this.#isTaxable(taxCode)
       };
     }
 
@@ -312,18 +347,31 @@ class CostcoReceiptParser {
     //   Use ORG FIRM TO as the name and D-1204135 as the item identifier
     const itemIdentifierForDiscount = this.itemIdentifierByDiscountIdentifier[itemIdentifier];
     if (itemIdentifierForDiscount) {
+      const taxCode = this.taxCodeByItemIdentifier[itemIdentifierForDiscount];
+
       return {
         itemName: this.itemNameByItemIdentifier[itemIdentifierForDiscount],
-        itemIdentifier: `D-${ itemIdentifierForDiscount }`
+        itemIdentifier: `D-${ itemIdentifierForDiscount }`,
+        isTaxable: this.#isTaxable(taxCode)
       };
     }
 
     // This is a return so reduce the number of items sold by one.
-    this.totalItemsSoldCalculated--;
+    console.debug(" determineItemNameAndIdentifier; returned item");
+    this.itemNameByItemIdentifier[itemIdentifier] = itemName;
+    this.numItemsSoldCalculated--;
+
     return {
-      itemName: formattedItemName,
-      itemIdentifier: `R-${ itemIdentifier }`
+      itemName,
+      itemIdentifier: `R-${ itemIdentifier }`,
+      isTaxable: this.#isTaxable(originalItemIdentifier)
     };
+  }
+
+  // E means tax-exempt for food; F means tax-exempt as it's FSA-eligible
+  #isTaxable(itemIdentifier) {
+    const taxCode = itemIdentifier.charAt(0);
+    return !["E", "F"].includes(taxCode);
   }
 
   // Some item names have numbers which can merge with the item's
@@ -331,7 +379,6 @@ class CostcoReceiptParser {
   // item names to prevent this issue.
   #transactionReplacements(line) {
     const itemNamesWithNumbers = ["KS WATER 40", "CHNT 10-3/8"];
-
     for (const itemName of itemNamesWithNumbers) {
       if (line.includes(itemName)) {
         return line.replace(itemName, `${ itemName } `);
@@ -340,25 +387,22 @@ class CostcoReceiptParser {
 
     return line;
   }
-
-  #dollarRegex() {
-    return `(${ this.regexUtils.dollar() }-?)`;
-  }
   
   #formatAmount(amount) {
     // check if last char is a `-`, this means it's negative (refund)
     if (amount.slice(-1) === "-") {
       return this.numberUtils.dollarToNumber(amount.slice(0, -1), true);
-    } else {
-      return this.numberUtils.dollarToNumber(amount);
     }
+
+    return this.numberUtils.dollarToNumber(amount);
   }
   
   #find(line, str) {
-    const indexOfSubtotal = line.indexOf(str);
-    if (indexOfSubtotal > -1) {
-      return line.substring(indexOfSubtotal + str.length);
+    const index = line.indexOf(str);
+    if (index > -1) {
+      return line.substring(index + str.length);
     }
+
     return undefined;
   }
 }

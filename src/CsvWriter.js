@@ -1,11 +1,10 @@
 const createCsvWriter = require("csv-writer").createObjectCsvWriter;
 
 class CsvWriter {
-  constructor({ outputDir, headers: headers, append = true, logSuccess = true } = {}) {
+  constructor({ outputDir, headers: headers, append = true } = {}) {
     this.outputDir = outputDir;
     this.headers = headers;
     this.append = append;
-    this.logSuccess = logSuccess;
   }
 
   write(fileName, transactions) {
@@ -17,9 +16,7 @@ class CsvWriter {
     })
       .writeRecords(transactions)
       .then(() => {
-        if (this.logSuccess) {
-          console.log(`${ path } written successfully.`)
-        }
+        console.debug(`${ path } written successfully.`);
       });
   }
 }
