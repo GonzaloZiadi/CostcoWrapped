@@ -380,7 +380,7 @@ class CostcoReceiptParser {
   // price and mess up the total. We add a space after known problematic
   // item names to prevent this issue.
   #transactionReplacements(line) {
-    const itemNamesWithNumbers = ["KS WATER 40", "CHNT 10-3/8", "DIAPERS SZ 1", "DIAPERS SZ 2", "DIAPERS SZ 3", "DIAPERS SZ 4", "DIAPERS SZ 5", "DIAPERS SZ 6"];
+    const itemNamesWithNumbers = ["KS WATER 40", "CHNT 10-3/8", "DIAPERS SZ 1", "DIAPERS SZ 2", "DIAPERS SZ 3", "DIAPERS SZ 4", "DIAPERS SZ 5", "DIAPERS SZ 6", "KS DIAPER S1", "KS DIAPER S2", "KS DIAPER S3", "KS DIAPER S4", "KS DIAPER S5", "KS DIAPER S6", "MICHBLADE16", "MICHBLADE26"];
     for (const itemName of itemNamesWithNumbers) {
       if (line.includes(itemName)) {
         return line.replace(itemName, `${ itemName } `);
