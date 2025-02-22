@@ -68,7 +68,7 @@ class CostcoReceiptParser {
       };
     }
   
-    const total = this.#find(line, "****TOTAL");
+    const total = this.#find(line, "**** TOTAL");
     if (total) {
       this.total = this.#formatAmount(total);
       this.hasRemainingTransactions = false;
