@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const chalk = require("chalk");
-const pdfParse = require("pdf-parse");
+const pdf = require("pdfdataextract");
 const { CostcoReceiptParser } = require("./src/CostcoReceiptParser");
 const { CsvWriter } = require("./src/CsvWriter");
 const { NumberUtils } = require("./src/NumberUtils");
@@ -49,14 +49,17 @@ function getReceiptPdfFileNames() {
 function parseReceiptPdf(pdfName) {
   let transactions = [];
 
-  pdfParse(fs.readFileSync(pdfName)).then(data => {
+  pdf.PdfData.extract(fs.readFileSync(pdfName)).then(data => {
     const costcoReceiptParser = new CostcoReceiptParser();
 
-    for (const line of data.text.split("\n")) {
-      const transaction = parseReceiptLine(line, costcoReceiptParser);
-      if (transaction) {
-        console.debug("transaction is ", JSON.stringify(transaction), "\n");
-        transactions.push(transaction);
+    // data.text[] is an array of pages now - need to iterate through them
+    for (const page of data.text) { 
+      for (const line of page.split("\n")) {
+        const transaction = parseReceiptLine(line, costcoReceiptParser);
+        if (transaction) {
+          console.debug("transaction is ", JSON.stringify(transaction), "\n");
+          transactions.push(transaction);
+        }
       }
     }
 
