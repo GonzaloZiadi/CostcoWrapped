@@ -28,3 +28,7 @@ the Costco receipt PDF. It's fed each line of the PDF and returns all of the tra
 This file is heavily commented to explain how it works.
 
 The rest of the helper classes are fairly small and contain comments as well.
+
+## Contributors
+
+Thanks to [Neville](https://github.com/nevillev) for changing the PDF parsing library to pdfdataextract, which handles spaces better than pdf-parse. ([commit](https://github.com/GonzaloZiadi/CostcoWrapped/commit/c56a8cfdd20c4af13c42a512d4a4c22f002518a3))
