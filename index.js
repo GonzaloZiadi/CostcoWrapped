@@ -53,7 +53,7 @@ function parseReceiptPdf(pdfName) {
     const costcoReceiptParser = new CostcoReceiptParser();
 
     // data.text[] is an array of pages now - need to iterate through them
-    for (const page of data.text) { 
+    for (const page of data.text) {
       for (const line of page.split("\n")) {
         const transaction = parseReceiptLine(line, costcoReceiptParser);
         if (transaction) {

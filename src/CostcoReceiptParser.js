@@ -229,16 +229,14 @@ class CostcoReceiptParser {
   }
   
   #parseTransaction(line) {
-    const transaction = this.#transactionReplacements(line);
-
     // A line can look like 329256/77713142.00
     // 329256 is the item identifier 7771314 is another identifier, 2.00 is the price
     // We try to find a matching identifier (i.e., 7771314) based on previous lines
-    if (transaction.includes("/")) {
+    if (line.includes("/")) {
       for (const itemIdentifier of Object.keys(this.itemNameByItemIdentifier)) {
         // "329256/77713142.00".split("/") => [329256, 77713142.00]
         // 77713142.00, split on 7771314 => ["", 2.00]
-        const splitOnItemIdentifier = transaction.split("/")[1].split(itemIdentifier);
+        const splitOnItemIdentifier = line.split("/")[1].split(itemIdentifier);
         if (splitOnItemIdentifier[0] === "") {
           console.debug(` parseTransaction; includes slash, match found. [${itemIdentifier}, ${this.itemNameByItemIdentifier[itemIdentifier]}, ${splitOnItemIdentifier[1]}]`);
 
@@ -259,7 +257,7 @@ class CostcoReceiptParser {
     // We capture the numbers at the start (item identifier), everything that follows (item name),
     // and the dollar amount at the end.
     const transactionRegex = `([A-Z]?[0-9]+)(${ this.regexUtils.nonGreedyAnything() })${ this.regexUtils.dollar() }`;
-    const foundTransaction = this.regexUtils.matchAll(transaction, transactionRegex);
+    const foundTransaction = this.regexUtils.matchAll(line, transactionRegex);
     if (foundTransaction.length) {
       console.debug(` parseTransaction; match found. [${foundTransaction[2]}, ${foundTransaction[1]}, ${foundTransaction[3]}]`);
 
@@ -279,7 +277,7 @@ class CostcoReceiptParser {
 
     // Remove all letters from the item identifier as there might be a letter
     // at the start, e.g., E or F, that mean the item is food or FSA-eligible
-    const itemIdentifier = originalItemIdentifier.replace(/[A-Z]/g, "");
+    const itemIdentifier = originalItemIdentifier.replace(/[A-Z]/g, "").trim();
 
     // This is a typical bought item.
     //
@@ -374,20 +372,6 @@ class CostcoReceiptParser {
   #isTaxable(itemIdentifier) {
     const taxCode = itemIdentifier.charAt(0);
     return !["E", "F"].includes(taxCode);
-  }
-
-  // Some item names have numbers which can merge with the item's
-  // price and mess up the total. We add a space after known problematic
-  // item names to prevent this issue.
-  #transactionReplacements(line) {
-    const itemNamesWithNumbers = ["KS WATER 40", "CHNT 10-3/8", "DIAPERS SZ 1", "DIAPERS SZ 2", "DIAPERS SZ 3", "DIAPERS SZ 4", "DIAPERS SZ 5", "DIAPERS SZ 6", "KS DIAPER S1", "KS DIAPER S2", "KS DIAPER S3", "KS DIAPER S4", "KS DIAPER S5", "KS DIAPER S6", "MICHBLADE16", "MICHBLADE26"];
-    for (const itemName of itemNamesWithNumbers) {
-      if (line.includes(itemName)) {
-        return line.replace(itemName, `${ itemName } `);
-      }
-    }
-
-    return line;
   }
   
   #formatAmount(amount) {
